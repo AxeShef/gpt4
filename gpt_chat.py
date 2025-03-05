@@ -60,6 +60,9 @@ try:
             self.font_size = 12
             self.message_count = 0
             
+            # Путь к файлу с последним чатом
+            self.last_chat_path = "last_chat_path.txt"
+            
             # Создаем главный контейнер с увеличенными отступами
             self.main_container = ctk.CTkFrame(self.window)
             self.main_container.pack(fill="both", expand=True, padx=30, pady=20)
@@ -262,33 +265,89 @@ try:
                     filetypes=[("JSON files", "*.json")]
                 )
                 if filepath:
+                    # Сохраняем сообщения и информацию о провайдере
+                    chat_data = {
+                        "messages": self.messages,
+                        "provider": self.provider_var.get()
+                    }
                     with open(filepath, 'w', encoding='utf-8') as f:
-                        json.dump(self.messages, f, ensure_ascii=False, indent=2)
+                        json.dump(chat_data, f, ensure_ascii=False, indent=2)
+                    # Сохраняем путь к последнему чату
+                    with open(self.last_chat_path, 'w', encoding='utf-8') as f:
+                        f.write(filepath)
                     self.update_status("Чат сохранен")
             except Exception as e:
                 self.update_status(f"Ошибка при сохранении: {str(e)}")
 
-        def load_chat(self):
+        def load_chat(self, filepath=None):
             """Загружает историю чата из файла"""
             try:
-                filepath = filedialog.askopenfilename(
-                    filetypes=[("JSON files", "*.json")]
-                )
-                if filepath:
+                if not filepath:
+                    filepath = filedialog.askopenfilename(
+                        filetypes=[("JSON files", "*.json")]
+                    )
+                
+                if filepath and os.path.exists(filepath):
                     with open(filepath, 'r', encoding='utf-8') as f:
-                        self.messages = json.load(f)
+                        loaded_data = json.load(f)
+                    
+                    # Определяем формат данных (новый или старый)
+                    if isinstance(loaded_data, dict):
+                        # Новый формат
+                        loaded_messages = loaded_data.get("messages", [])
+                        loaded_provider = loaded_data.get("provider")
+                    else:
+                        # Старый формат (только список сообщений)
+                        loaded_messages = loaded_data
+                        # Пытаемся определить провайдера из последнего сообщения AI
+                        loaded_provider = None
+                        for msg in reversed(loaded_messages):
+                            if msg["role"] == "assistant":
+                                # Берем провайдера из последнего успешного ответа AI
+                                loaded_provider = self.provider_var.get()
+                                break
+                    
+                    # Сначала очищаем текущий чат
                     self.clear_chat()
+                    
+                    # Загружаем новые сообщения
+                    self.messages = loaded_messages
+                    
+                    # Отображаем сообщения
                     for msg in self.messages:
                         if msg["role"] == "user":
                             self.chat_display.insert("end", f"Вы: {msg['content']}\n")
                         else:
                             self.chat_display.insert("end", f"AI: {msg['content']}\n\n")
+                    
+                    # Прокручиваем к концу
                     self.chat_display.see("end")
+                    
+                    # Обновляем счетчик
                     self.message_count = len(self.messages)
                     self.update_message_counter()
+                    
+                    # Устанавливаем провайдера, если он доступен
+                    if loaded_provider:
+                        # Проверяем, есть ли провайдер в списке доступных
+                        provider_exists = False
+                        for provider in self.providers:
+                            if provider.__name__ == loaded_provider:
+                                provider_exists = True
+                                self.provider_var.set(loaded_provider)
+                                break
+                        
+                        if not provider_exists:
+                            self.update_status(f"Провайдер {loaded_provider} недоступен, используется {self.provider_var.get()}")
+                    
+                    # Сохраняем путь к последнему чату
+                    with open(self.last_chat_path, 'w', encoding='utf-8') as f:
+                        f.write(filepath)
+                    
                     self.update_status("Чат загружен")
             except Exception as e:
                 self.update_status(f"Ошибка при загрузке: {str(e)}")
+                messagebox.showerror("Ошибка", f"Не удалось загрузить чат: {str(e)}")
 
         def update_message_counter(self):
             """Обновляет счетчик сообщений"""
@@ -307,6 +366,8 @@ try:
             """Очищает чат и историю сообщений"""
             self.chat_display.delete("0.0", "end")
             self.messages = []
+            self.message_count = 0
+            self.update_message_counter()
             self.update_status("Чат очищен")
 
         def update_status(self, text):
